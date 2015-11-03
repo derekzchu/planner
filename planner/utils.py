@@ -1,6 +1,6 @@
 from contextlib import contextmanager
 from sqlalchemy.orm import sessionmaker
-from models import engine, Inventory, Plan, Task, WorkOrder
+from models import engine, Inventory, Plan, Task, WorkOrder, WorkOrderInventory
 
 
 @contextmanager
@@ -35,6 +35,17 @@ def populate_inventory():
             row = Inventory(product_name = item[0], quantity = item[1])
             session.add(row)
 
+def sum_actual_quantity(task):
+    sum = 0
+
+    if len(task.work_order) == 0:
+        return sum
+
+    for work_order in task.order_order:
+        sum += work_order.actual_quantity
+
+    return sum
+
 def clear_dbs():
     """
     Delete any existing plans
@@ -44,3 +55,4 @@ def clear_dbs():
         session.query(Plan).delete()
         session.query(Task).delete()
         session.query(WorkOrder).delete()
+        session.query(WorkOrderInventory).delete()

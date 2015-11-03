@@ -1,6 +1,6 @@
 import gevent.pywsgi
 from sqlalchemy import func, case, literal_column
-from flask import Flask, request, abort, jsonify
+from flask import Flask, request, abort, jsonify, url_for
 import json
 import utils, models
 from models import Status
@@ -8,6 +8,7 @@ import gevent  # Use Cooperative threading
 import syslog
 
 app = Flask(__name__)
+
 
 @app.route('/inventory/<int:inv_id>')
 @app.route('/inventory')
@@ -18,19 +19,22 @@ def get_inventory(inv_id = None):
 
     @return inventory
     """
-    ret = []
+    ret = None
     with utils.db_session() as session:
         if inv_id:
             query_res = session.query(models.Inventory).get(inv_id)
             if not query_res:
                 raise HTTPError(404, 'Inventory not found')
-            ret.append(query_res.as_dict())
+            ret = query_res.as_dict()
         else:
             query_res = session.query(models.Inventory).all()
+            ret = []
             for result in query_res:
-                ret.append(result.as_dict())
+                link = url_for('get_inventory', inv_id = result.id)
+                ret.append(result.as_dict(link = link))
 
     return json.dumps(ret)
+
 
 @app.route('/plans', methods = ['POST'])
 def create_plan():
@@ -39,19 +43,20 @@ def create_plan():
 
      @return plan dict
      """
-     try:
-         content = request.get_json()
-         name = content['name']
-     except Exception:
+     content = request.get_json()
+     name = content.get('name', None)
+     if name is None:
          raise HTTPError(400, 'Plan is missing a name')
 
      with utils.db_session() as session:
          new_plan = models.Plan(name)
          session.add(new_plan)
-
          session.flush()
 
-         return json.dumps(new_plan.as_dict())
+         link = url_for('get_plans', plan_id = new_plan.id)
+         ret = new_plan.as_dict(link = link)
+     return json.dumps(ret)
+
 
 @app.route('/plans/<int:plan_id>')
 @app.route('/plans')
@@ -62,21 +67,24 @@ def get_plans(plan_id = None):
 
     @return plans
     """
-    ret = []
+    ret = None
     with utils.db_session() as session:
         if plan_id:
             query_res = session.query(models.Plan).get(plan_id)
             if not query_res:
                 raise HTTPError(404, 'Plan not found')
             
-            ret.append(query_res.as_dict())
+            ret = query_res.as_dict()
 
         else:
             query_res = session.query(models.Plan).all()
+            ret = []
             for result in query_res:
-                ret.append(result.as_dict())
+                link = url_for('get_plans', plan_id = result.id)
+                ret.append(result.as_dict(link = link))
 
     return json.dumps(ret)
+
 
 @app.route('/plans/<int:plan_id>', methods = ['DELETE'])
 def delete_plans(plan_id):
@@ -86,14 +94,16 @@ def delete_plans(plan_id):
     with utils.db_session() as session:
         plan = session.query(models.Plan).get(plan_id)
         if plan:
-            num_tasks = session.query(models.Task)\
-                .filter(models.Task.plan_id == plan_id).count()
+#            num_tasks = session.query(models.Task)\
+#                .filter(models.Task.plan_id == plan_id).count()
+#            if num_tasks > 0:
 
-            if num_tasks > 0:
+            if len(plan.tasks) > 0:
                 raise HTTPError(403, 'Cannot delete plan with tasks')
 
             session.delete(plan)
     return json.dumps({'Success': True})
+
 
 @app.route('/plans/<int:plan_id>/tasks', methods = ['POST'])
 def create_task(plan_id):
@@ -104,14 +114,15 @@ def create_task(plan_id):
 
     @returns: task resource if successful
     """
-    try:
-        content = request.get_json()
-        product = content['prod_id']
-        quantity = content['quantity']
-    except Exception:
+    content = request.get_json()
+    product = content.get('prod_id', None)
+    quantity = content.get('quantity', None)
+
+    if (not isinstance(product, int) and product > 0) or \
+            (not isinstance(quantity, int) and quantity > 0):
         raise HTTPError(400, 'Invalid parameters for task')
 
-    ret = []
+    ret = None
     with utils.db_session() as session:
         query_res = session.query(models.Plan).get(plan_id)
         if not query_res:
@@ -123,16 +134,15 @@ def create_task(plan_id):
         if item.quantity < quantity:
             raise HTTPError(400, 'Quantity of task exceeds central inventory')
 
-        new_task = models.Task()
-        new_task.plan_id = plan_id
-        new_task.product_id = product
-        new_task.target_quantity = quantity
+        new_task = models.Task(plan_id, product, quantity)
         session.add(new_task)
         session.flush()
 
-        ret.append(new_task.as_dict())
+        link = url_for('get_tasks', task_id = new_task.id)
+        ret = new_task.as_dict(link = link)
 
     return json.dumps(ret)
+
 
 @app.route('/tasks')
 @app.route('/tasks/<int:task_id>')
@@ -154,19 +164,259 @@ def get_tasks(plan_id = None, task_id = None):
             query_res = session.query(models.Task).get(task_id)
             if not query_res:
                 raise HTTPError(404, 'Task id not found')
-            ret.append(query_res.as_dict())
+
+            ret = query_res.as_dict(include_wo = True)
 
         elif plan_id:
             query_res = session.query(models.Plan, models.Task)\
                 .filter(models.Plan.id == plan_id).join(models.Task)
 
             for plan_res, result in query_res:
-                ret.append(result.as_dict())
+                link = url_for('get_tasks', task_id = result.id)
+                ret.append(result.as_dict(include_wo = True, link = link))
 
         else:
             query_res = session.query(models.Task).all()
             for result in query_res:
-                ret.append(result.as_dict())
+                link = url_for('get_tasks', task_id = result.id)
+                ret.append(result.as_dict(include_wo = True, link = link))
+
+    return json.dumps(ret)
+
+
+@app.route('/tasks/<int:task_id>', methods = ['DELETE'])
+def delete_task(task_id):
+    """
+    Deletes a specified task
+
+    @param task_id pk
+    @return success
+    """
+
+    with utils.db_session() as session:
+        task = session.query(models.Task).get(task_id)
+        if task:
+            if task.status != Status.NOTSTARTED:
+                raise HTTPError(403, 'Task already started. Cannot delete active task')
+
+            session.delete(task)
+
+    return json.dumps({'Success': True})
+
+
+# @app.route('/tasks/<task_id:int>', method = 'PUT')
+# def update_tasks(task_id):
+#     """
+#     Updates a task. The follow operations are allowed by the client:
+#     1. Reparent the task's plan
+#     2. Change the product id iff the task has 0 workorders
+    
+#     @param task_id pk
+#     @return success status
+#     """
+#     new_plan_id = new_target_quantity = None
+#     try:
+#         req = json.load(request.body)
+#         if 'plan_id' in req:
+#             new_plan_id = req['plan_id']
+#         elif 'product_id' in req:
+#             new_product_id = req['product_id']
+#             new_target_quantity = req['product_quantity']
+#         else:
+#             new_product_quantity = req['product_quantity']
+
+#     except Exception:
+#         raise HTTPError(400, 'Invalid payload')
+
+#     with utils.db_session() as session:
+#         task = session.query(models.Task).get(task_id)
+#         if not task:
+#             raise HTTPError(404, 'Task not found')
+
+#         if new_plan_id:
+#             task.plan_id = new_plan_id
+#             session.flush()
+#         else:
+#             if new_product_id:
+#                 #check if existing work orders
+#                 num_work_orders = session.query(models.WorkOrders)\
+#                     .filter(Tasks.id == task_id).count()
+#                 if num_work_orders > 0:
+#                     raise HTTPError(403, 'Task has existing work orders. Cannot alter product')
+#                 task.product_id = new_product_id
+
+#             #check if there's enough inventory
+#             available_inventory = session.query(models.Inventory).get(new_product_id)
+#             if not available_inventory or \
+#                     available_inventory.quantity < new_target_quantity :
+#                 raise HTTPError(403, 'Invalid product quantity')
+
+#             task.target_quantity = new_target_quantity
+#             session.flush()
+
+#             json.dumps({'Success': True})
+
+
+@app.route('/tasks/<int:task_id>/work_order', methods = ['POST'])
+def create_work_order(task_id):
+    """
+    Creates a new work order
+    @param: task_id (pk)
+    @body: json target_quantity
+
+    @return work order    
+    """
+
+    ret = []
+    content = request.get_json()
+    target_quantity = content.get('target_quantity', None)
+    if not isinstance(target_quantity, int) and target_quantity <= 0:
+        raise HTTPError(400, 'Invalid parameters to work order')
+
+    with utils.db_session() as session:
+        total_work = func.sum(models.WorkOrder.target_quantity)\
+            .label('total_wo_quantity')
+
+        query_res = session.query(\
+            models.Task, total_work)\
+            .outerjoin(models.WorkOrder)\
+            .filter(models.Task.id == task_id)
+#        query_res = session.query(\
+#            models.Task.target_quantity, models.Task.status, total_work)\
+#            .outerjoin(models.WorkOrder)\
+#            .filter(models.Task.id == task_id)
+
+        for result in query_res:
+            task, total_work = result
+#            task_target_quantity, task_status, total_work = result
+        if not total_work:
+            total_work = 0
+
+        if not task:
+            raise HTTPError(404, 'Task not found')
+
+        if task.get_status() == Status.COMPLETED:
+            raise HTTPError(403, 'Task is already completed. Cannot add new work order')
+
+        if target_quantity + total_work > task.target_quantity:
+            raise HTTPError(403, 'New work order quantity greater than task total quantity')
+        
+        new_wo = models.WorkOrder()
+        new_wo.target_quantity = target_quantity
+        new_wo.task_id = task_id
+
+        session.add(new_wo)
+        session.flush()
+
+        link = url_for('get_work_order', work_id = new_wo.id)
+        ret = new_wo.as_dict(link = link)
+    return json.dumps(ret)
+
+
+@app.route('/work_orders/<int:work_id>', methods = ['PUT'])
+def update_work_order(work_id):
+    """
+    Updates the quantity for a work order.
+
+    @return updated work order
+    """
+    ret = []
+    content = request.get_json()
+    quantity = content.get('actual_quantity', None)
+    completed = content.get('completed', False)
+
+    if quantity and quantity <= 0:
+        raise HTTPError(400, 'Invalid parameters to update work order')
+
+    with utils.db_session() as session:
+        wo = session.query(models.WorkOrder).get(work_id)
+        if not wo:
+            raise HTTPError(404, 'Work order not found')
+
+        query_res = session.query(\
+            models.Inventory,
+            models.WorkOrderInventory)\
+            .outerjoin(models.WorkOrderInventory)\
+            .filter(models.Inventory.id == wo.task.product_id)
+
+        wo_inventory = None
+        for result in query_res:
+            central_inventory, wo_inventory = result
+
+        if wo_inventory is None:
+            wo_inventory = models.WorkOrderInventory(wo.task.product_id)
+            session.add(wo_inventory)
+
+        if quantity is not None:
+            #check if work order quantity can be updated / started
+            quantity_diff = quantity - wo.actual_quantity
+
+            wo_inventory.active_inventory += quantity_diff
+            if wo_inventory.active_inventory > central_inventory.quantity:
+               raise HTTPError(403, 'Work order cannot be started because central inventory does not have enough product')
+
+            wo.actual_quantity = quantity
+
+        #Update the WO status. If it was NOTSTARTED before, mark as INPROGRESS
+        if wo.status == Status.NOTSTARTED:
+            wo.status = Status.INPROGRESS
+            wo.task.status = Status.INPROGRESS
+        if completed:
+            if wo.actual_quantity <= 0:
+                raise HTTPError(403, 'Cannot complete work order without any product applied')
+            wo.status = Status.COMPLETED
+
+        #Determine if all the WorkOrders are completed.
+        total_wo = func.count(models.WorkOrder.id)
+        total_completed = func.count(case(\
+                [((models.WorkOrder.status == Status.COMPLETED), models.WorkOrder.id)], else_ = literal_column("NULL"))).label("total_wo_complete")
+        sum_wo_quantity = func.sum(models.WorkOrder.actual_quantity)
+
+        query_res = session.query(total_completed, total_wo, sum_wo_quantity).filter(models.WorkOrder.task_id == wo.task.id)
+        for result in query_res:
+            num_complete, num_wo, total_quantity = result
+
+        if num_complete and num_wo and num_complete == num_wo:
+            #All WorkOrders are complete. Update Central Inventory
+#            wo.task.status = Status.COMPLETED
+            wo_inventory.active_inventory -= total_quantity
+            central_inventory.quantity -= total_quantity
+
+        session.flush()
+        link = url_for('get_work_order', work_id = work_id)
+        ret.append(wo.as_dict(link = link))
+
+    return json.dumps(ret)
+
+
+@app.route('/work_orders')
+@app.route('/tasks/<int:task_id>/work_orders')
+@app.route('/work_orders/<int:work_id>')
+def get_work_order(work_id = None, task_id = None):
+    """
+    Get a specified work order
+
+    @return request work orders
+    """
+
+    ret = []
+    with utils.db_session() as session:
+        if work_id:
+            query_res = session.query(models.WorkOrder).get(work_id)
+            if not query_res:
+                raise HTTPError(404, 'Work Order not found')
+            ret = query_res.as_dict()
+        elif task_id:
+            query_res = session.query(models.WorkOrder)\
+                .filter(models.Task.id == task_id).join(models.Task)
+            for result in query_res:
+                link = url_for('get_work_order', work_id = result.id)
+                ret.append(result.as_dict(link = link))
+        else:
+            query_res = session.query(models.WorkOrder).all()
+            for result in query_res:
+                link = url_for('get_work_order', work_id = result.id)
+                ret.append(result.as_dict(link = link))
 
     return json.dumps(ret)
 
@@ -185,6 +435,7 @@ class HTTPError(Exception):
         rv = dict(self.payload or ())
         rv['message'] = self.message
         return rv
+
 
 @app.errorhandler(HTTPError)
 def handle_http_error(error):
