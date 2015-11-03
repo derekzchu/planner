@@ -1,0 +1,6 @@
+corn,15000
+barley,300
+soy,1000
+oats,60
+herbicide1, 150
+herbicide2, 75
