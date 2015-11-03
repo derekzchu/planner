@@ -41,3 +41,6 @@ def clear_dbs():
     """
     with db_session() as session:
         session.query(Inventory).delete()
+        session.query(Plan).delete()
+        session.query(Task).delete()
+        session.query(WorkOrder).delete()

@@ -1,5 +1,5 @@
 import gevent.pywsgi
-from sqlalchemy import func
+from sqlalchemy import func, case, literal_column
 from flask import Flask, request, abort, jsonify
 import json
 import utils, models
@@ -27,6 +27,144 @@ def get_inventory(inv_id = None):
             ret.append(query_res.as_dict())
         else:
             query_res = session.query(models.Inventory).all()
+            for result in query_res:
+                ret.append(result.as_dict())
+
+    return json.dumps(ret)
+
+@app.route('/plans', methods = ['POST'])
+def create_plan():
+     """
+     create a new plan
+
+     @return plan dict
+     """
+     try:
+         content = request.get_json()
+         name = content['name']
+     except Exception:
+         raise HTTPError(400, 'Plan is missing a name')
+
+     with utils.db_session() as session:
+         new_plan = models.Plan(name)
+         session.add(new_plan)
+
+         session.flush()
+
+         return json.dumps(new_plan.as_dict())
+
+@app.route('/plans/<int:plan_id>')
+@app.route('/plans')
+def get_plans(plan_id = None):
+    """
+    Get all the plans.
+    @param plan_id is pk of the plan table
+
+    @return plans
+    """
+    ret = []
+    with utils.db_session() as session:
+        if plan_id:
+            query_res = session.query(models.Plan).get(plan_id)
+            if not query_res:
+                raise HTTPError(404, 'Plan not found')
+            
+            ret.append(query_res.as_dict())
+
+        else:
+            query_res = session.query(models.Plan).all()
+            for result in query_res:
+                ret.append(result.as_dict())
+
+    return json.dumps(ret)
+
+@app.route('/plans/<int:plan_id>', methods = ['DELETE'])
+def delete_plans(plan_id):
+    """
+    Deletes a plan if specified plan has no tasks
+    """
+    with utils.db_session() as session:
+        plan = session.query(models.Plan).get(plan_id)
+        if plan:
+            num_tasks = session.query(models.Task)\
+                .filter(models.Task.plan_id == plan_id).count()
+
+            if num_tasks > 0:
+                raise HTTPError(403, 'Cannot delete plan with tasks')
+
+            session.delete(plan)
+    return json.dumps({'Success': True})
+
+@app.route('/plans/<int:plan_id>/tasks', methods = ['POST'])
+def create_task(plan_id):
+    """
+    Create a task
+    @param: plan_id
+    @body: json object with prod_id, and quantity
+
+    @returns: task resource if successful
+    """
+    try:
+        content = request.get_json()
+        product = content['prod_id']
+        quantity = content['quantity']
+    except Exception:
+        raise HTTPError(400, 'Invalid parameters for task')
+
+    ret = []
+    with utils.db_session() as session:
+        query_res = session.query(models.Plan).get(plan_id)
+        if not query_res:
+            raise HTTPError(404, 'Plan not found')
+
+        item = session.query(models.Inventory).get(product)
+        if not item:
+            raise HTTPError(400, 'Product does not exist')
+        if item.quantity < quantity:
+            raise HTTPError(400, 'Quantity of task exceeds central inventory')
+
+        new_task = models.Task()
+        new_task.plan_id = plan_id
+        new_task.product_id = product
+        new_task.target_quantity = quantity
+        session.add(new_task)
+        session.flush()
+
+        ret.append(new_task.as_dict())
+
+    return json.dumps(ret)
+
+@app.route('/tasks')
+@app.route('/tasks/<int:task_id>')
+@app.route('/plans/<int:plan_id>/tasks')
+def get_tasks(plan_id = None, task_id = None):
+    """
+    Get tasks. Can retrieve a single task, all tasks, or all tasks given
+    a plan_id. If plan_id specified, return a join of plan and tasks of that
+    plan.
+
+    @param: task_id pk
+    @param: plan_id pk
+
+    @returns list of task/tasks
+    """
+    ret = []
+    with utils.db_session() as session:
+        if task_id:
+            query_res = session.query(models.Task).get(task_id)
+            if not query_res:
+                raise HTTPError(404, 'Task id not found')
+            ret.append(query_res.as_dict())
+
+        elif plan_id:
+            query_res = session.query(models.Plan, models.Task)\
+                .filter(models.Plan.id == plan_id).join(models.Task)
+
+            for plan_res, result in query_res:
+                ret.append(result.as_dict())
+
+        else:
+            query_res = session.query(models.Task).all()
             for result in query_res:
                 ret.append(result.as_dict())
 
