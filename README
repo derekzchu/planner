@@ -1,0 +1,108 @@
+Requirements:
+python 2.7
+gevent
+SqlAlchemy
+Flask
+
+Install:
+cd planner
+python setup.py install
+
+run
+cd planner
+python views.py
+
+
+The planner service is written in python and runs webserver on 8088
+http://localhost:8088/
+
+The APIs are RESTful with the eventual goal of using a web framework
+(suck as React) to render the templates and interact with the server.
+
+This service has the ability to create plans and for each plan, create numerous
+tasks associated for each plan. The following are the requirements:
+
+the user defines a plan that can consist of multiple tasks, and each task can have multiple work orders, and the tasks and work orders track the quantity of a product applied to a field, debiting quantities of that product from a central inventory tracking system.  The console app should be able to create a plan, add N tasks to the plan, and then assign M work orders for each task. Furthermore, 
+- each task should have a target quantity of a product (like an herbicide for example) to apply
+- each task can have a different product and a different target quantity
+- each work order should have a target quantity that is a subset of the task's target product quantity that should be applied with that work order
+- each work order should track the actual quantity of the task's target product quantity that was actually applied
+- each work order has a status, such as "not started", "in progress", "completed"
+- each task has a status such as "not started", "in progress", "completed" that is inherited from the status of the work orders attached to that task
+- the central inventory system should be able to start with a balance of each product (e.g, I have 150 gallons of an herbicide in my warehouse).  The supply of a product can only be decreased in this project, until the supply reaches zero
+- when each task is completed, a central inventory system is updated to track the amount of each unique product that is actually used.
+- if the central inventory system does not have a sufficient supply of the product that a work order specifies, then the app should not allow the work order to be started
+- the console app should then be able to list the planned vs actual quantities for each product assigned to each task in a simple tabular report (formatting not important, the numbers and approach are more important)
+The console app should be able to perform CRUD operations on the plan, tasks and work orders, modify product quantities (target and actual) for each task and for each work order, and then show a rolled up actual for each plan at the task and work order level.  The current balance of any product in the central inventory tracking system should be reported as well.
+
+
+This service has the following APIs:
+
+Retrieve information from the central inventory:
+GET /inventory
+GET /inventory/<id>
+
+Create a plan:
+POST /plans
+payload:
+{
+	"name": "Plan 1"
+}
+response will be a JSON representation of the created plan
+
+Retrieve plans or a given plan:
+GET /plans
+GET /plans/<plan_id>
+
+Modify a plan:
+DELETE /plans/<plan_id>
+
+Create a task for a plan_id:
+POST /plans/<plan_id>/tasks
+payload:
+{
+	"prod_id": 1
+	"quantity": 1000
+}
+response will be a JSON representation of the created task
+
+Retrieve tasks or a given task. Retrieve tasks for a specified plan:
+GET /tasks
+GET /plans/<plan_id/tasks
+GET /tasks/<task_id>
+
+Modify a task:
+DELETE /tasks/<task_id>
+PUT /tasks/<task_id>
+payload:
+{
+	"plan_id": 2
+	"product_id": 3
+	"target_quantity": 50
+}
+response will be a JSON representation of the modified task resource
+
+Create work order for a given task:
+POST /tasks/<task_id>/work_order
+payload:
+{
+	"target_quantity": 500
+}
+reponse will be a JSON representation of the newly created work order resource
+
+
+Modify a work order
+PUT /work_orders/<work_id>
+payload:
+{
+	"actual_quantity": 500
+	"completed": true
+}
+response will be a JSON representation of the newly modified work order resource
+
+DELETE /work_orders/<work_id>
+
+Retrieve work orders:
+GET /work_orders
+GET /tasks/<task_id>/work_orders
+GET /work_orders/<work_id>
