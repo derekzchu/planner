@@ -196,65 +196,75 @@ def delete_task(task_id):
     with utils.db_session() as session:
         task = session.query(models.Task).get(task_id)
         if task:
-            if task.status != Status.NOTSTARTED:
+            if task.get_status() != Status.NOTSTARTED:
                 raise HTTPError(403, 'Task already started. Cannot delete active task')
 
             session.delete(task)
 
-    return json.dumps({'Success': True})
+    return json.dumps({})
 
 
-# @app.route('/tasks/<task_id:int>', method = 'PUT')
-# def update_tasks(task_id):
-#     """
-#     Updates a task. The follow operations are allowed by the client:
-#     1. Reparent the task's plan
-#     2. Change the product id iff the task has 0 workorders
+@app.route('/tasks/<int:task_id>', methods = ['PUT'])
+def update_tasks(task_id):
+    """
+    Updates a task. The follow operations are allowed by the client:
+    1. Reparent the task's plan
+    2. Change the product id iff the task has 0 workorders
     
-#     @param task_id pk
-#     @return success status
-#     """
-#     new_plan_id = new_target_quantity = None
-#     try:
-#         req = json.load(request.body)
-#         if 'plan_id' in req:
-#             new_plan_id = req['plan_id']
-#         elif 'product_id' in req:
-#             new_product_id = req['product_id']
-#             new_target_quantity = req['product_quantity']
-#         else:
-#             new_product_quantity = req['product_quantity']
+    @param task_id pk
+    @return success status
+    """
 
-#     except Exception:
-#         raise HTTPError(400, 'Invalid payload')
+    content = request.get_json()
+    new_plan_id = content.get('plan_id', None)
+    new_product_id = content.get('product_id', None)
+    new_target_quantity = content.get('target_quantity', None)
 
-#     with utils.db_session() as session:
-#         task = session.query(models.Task).get(task_id)
-#         if not task:
-#             raise HTTPError(404, 'Task not found')
+    if new_target_quantity and (not isinstance(new_target_quantity, int)
+                                or new_target_quantity <= 0):
+        raise HTTPError(400, 'Invalid target quantity')
 
-#         if new_plan_id:
-#             task.plan_id = new_plan_id
-#             session.flush()
-#         else:
-#             if new_product_id:
-#                 #check if existing work orders
-#                 num_work_orders = session.query(models.WorkOrders)\
-#                     .filter(Tasks.id == task_id).count()
-#                 if num_work_orders > 0:
-#                     raise HTTPError(403, 'Task has existing work orders. Cannot alter product')
-#                 task.product_id = new_product_id
+    with utils.db_session() as session:
+        task = session.query(models.Task).get(task_id)
+        if not task:
+            raise HTTPError(404, 'Task not found')
 
-#             #check if there's enough inventory
-#             available_inventory = session.query(models.Inventory).get(new_product_id)
-#             if not available_inventory or \
-#                     available_inventory.quantity < new_target_quantity :
-#                 raise HTTPError(403, 'Invalid product quantity')
+        if new_plan_id:
+            plan = session.query(models.Plan).get(new_plan_id)
+            if not plan:
+                raise HTTPError(404, 'Target plan not found')
 
-#             task.target_quantity = new_target_quantity
-#             session.flush()
+            task.plan_id = new_plan_id
+            session.flush()
 
-#             json.dumps({'Success': True})
+        else:
+            if new_product_id:
+                #check if existing work orders
+                if len(task.work_order) > 0:
+                    raise HTTPError(403, 'Task has existing work orders. Cannot alter product')
+
+                task.product_id = new_product_id
+                new_target_quantity = task.target_quantity
+
+            if new_target_quantity:
+                if not new_product_id:
+                    new_product_id = task.product_id
+
+                #check if there's enough inventory
+                available_inventory = session.query(models.Inventory)\
+                    .get(new_product_id)
+                
+                if not available_inventory or \
+                        available_inventory.quantity < new_target_quantity :
+                    raise HTTPError(403, 'Task has Insufficient product quantity')
+
+                task.target_quantity = new_target_quantity
+
+            session.flush()
+
+        link = url_for('get_tasks', tasks_id = task_id)
+        ret = task.as_dict(link = link)
+        return json.dumps(ret)
 
 
 @app.route('/tasks/<int:task_id>/work_order', methods = ['POST'])
@@ -388,6 +398,22 @@ def update_work_order(work_id):
 
     return json.dumps(ret)
 
+@app.route('/work_orders/<int:work_id>', methods = ['DELETE'])
+def delete_work_order(work_id):
+    """
+    Delete a specified work order. Can only delete if work order has
+    status: NOTSTARTED
+    """
+
+    with utils.db_session() as session:
+        work_order = session.query(models.WorkOrder).get(work_id)
+        if work_order:
+            if work_order.status != Status.NOTSTARTED:
+                raise HTTPError(403, 'Cannot delete an active work order')
+
+            session.delete(work_order)
+
+    return json.dumps({})
 
 @app.route('/work_orders')
 @app.route('/tasks/<int:task_id>/work_orders')
