@@ -62,7 +62,7 @@ class Plan(Base):
     def __init__(self, name):
         self.name = name
 
-    def as_dict(self, link = None):
+    def as_dict(self, link = None, task_base = None):
         ret = {}
         for col in self.__table__.columns:
             if type(col.type) == DateTime:
@@ -72,6 +72,13 @@ class Plan(Base):
         if link:
             ret['link'] = link
 
+        if task_base:
+            tasks = []
+            for task in self.tasks:
+                task_name = 'task%d_link' % task.id
+                task_link = task_base + '/%d' % task.id
+                tasks.append({task_name: task_link})
+            ret['tasks'] = tasks
         return ret
 
 

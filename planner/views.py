@@ -73,8 +73,9 @@ def get_plans(plan_id = None):
             query_res = session.query(models.Plan).get(plan_id)
             if not query_res:
                 raise HTTPError(404, 'Plan not found')
-            
-            ret = query_res.as_dict()
+
+            task_base = url_for('get_tasks')
+            ret = query_res.as_dict(task_base = task_base)
 
         else:
             query_res = session.query(models.Plan).all()

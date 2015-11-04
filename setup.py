@@ -1,4 +1,4 @@
-from setuptools import setup
+from setuptools import setup, find_packages
 
 setup(
     name='planner',
@@ -6,6 +6,7 @@ setup(
     description='Plan/Task/WorkOrder model',
     maintainer='Derek Chu',
     maintainer_email='derekzchu@gmail.com',
+    packages = find_packages(),
 
     install_requires=[
         'Flask',
